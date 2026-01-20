@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Runner">
+    <meta name="theme-color" content="#4f46e5">
+    <title>Interval Runner PWA</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="data:application/manifest+json,{'name':'Interval Runner','short_name':'Runner','start_url':'.','display':'standalone','background_color':'#f8fafc','theme_color':'#4f46e5','icons':[{'src':'https://cdn-icons-png.flaticon.com/512/5502/5502444.png','sizes':'512x512','type':'image/png'}]}">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            overscroll-behavior: none;
+        }
+        .timer-display {
+            font-variant-numeric: tabular-nums;
+        }
+        .safe-area-inset {
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 flex flex-col safe-area-inset">
+
+    <div class="max-w-md mx-auto w-full p-6 flex-grow flex flex-col overflow-y-auto">
+        <header class="text-center mb-8 pt-4">
+            <h1 class="text-3xl font-extrabold text-indigo-600">Interval Runner</h1>
+            <p class="text-slate-500">Running Club Pro</p>
+        </header>
+
+        <!-- Configuration Section -->
+        <div id="setup-screen" class="space-y-6 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Run (min)</label>
+                    <input type="number" id="run-time" value="1" step="0.5" min="0.1" 
+                        class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-lg">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Walk (min)</label>
+                    <input type="number" id="walk-time" value="1" step="0.5" min="0.1" 
+                        class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-lg">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-1">Total Cycles</label>
+                <p class="text-xs text-slate-400 mb-2">(1 cycle = 1 run + 1 walk)</p>
+                <input type="number" id="total-cycles" value="18" min="1" 
+                    class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-lg">
+            </div>
+
+            <button onclick="startWorkout()" 
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-5 rounded-2xl text-xl shadow-lg shadow-indigo-200 transition-transform active:scale-95">
+                Start Training
+            </button>
+        </div>
+
+        <!-- Timer Section -->
+        <div id="timer-screen" class="hidden space-y-6 flex-grow flex flex-col items-center justify-center">
+            
+            <div class="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
+                <div id="progress-bar" class="bg-indigo-500 h-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+
+            <div id="phase-card" class="w-full bg-white p-8 rounded-3xl shadow-xl border-4 border-indigo-500 text-center transition-all duration-300">
+                <h2 id="current-phase" class="text-4xl font-black uppercase tracking-widest text-indigo-600 mb-2">RUN!</h2>
+                <div id="time-left" class="timer-display text-7xl font-extrabold tabular-nums mb-4">01:00</div>
+                <div class="text-slate-500 font-semibold text-lg">
+                    Cycle <span id="cycle-count">1</span> / <span id="total-count-display">18</span>
+                </div>
+            </div>
+
+            <div class="bg-indigo-50 px-6 py-3 rounded-full border border-indigo-100 flex items-center gap-3">
+                <div class="w-2 h-2 bg-indigo-400 rounded-full animate-pulse"></div>
+                <p class="text-indigo-600 font-bold text-sm uppercase tracking-wider">
+                    Total: <span id="total-elapsed" class="timer-display">00:00</span>
+                </p>
+            </div>
+
+            <div class="flex gap-4 w-full pt-4">
+                <button onclick="togglePause()" id="pause-btn"
+                    class="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-4 rounded-2xl transition-all">
+                    Pause
+                </button>
+                <button onclick="stopWorkout()" 
+                    class="flex-1 bg-red-100 hover:bg-red-200 text-red-600 font-bold py-4 rounded-2xl transition-all">
+                    Reset
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="p-6 text-center text-slate-400 text-xs">
+        v1.1 • App Mode Enabled • WakeLock Ready
+    </footer>
+
+    <script>
+        let intervalId = null;
+        let isPaused = false;
+        let currentCycle = 1;
+        let isRunningPhase = true; 
+        let secondsLeft = 0;
+        let totalSecondsElapsed = 0;
+        let wakeLock = null;
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (err) {
+                console.warn("WakeLock failed: This is normal on some browsers until user interacts.");
+            }
+        }
+
+        function playBeep(frequency = 880, duration = 0.5) {
+            try {
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.error("Audio error", e);
+            }
+        }
+
+        function formatTime(totalSecs) {
+            const mins = Math.floor(totalSecs / 60);
+            const secs = totalSecs % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function startWorkout() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            requestWakeLock();
+
+            const runMin = parseFloat(document.getElementById('run-time').value);
+            const totalCycles = parseInt(document.getElementById('total-cycles').value);
+
+            currentCycle = 1;
+            isRunningPhase = true;
+            secondsLeft = Math.round(runMin * 60);
+            totalSecondsElapsed = 0;
+
+            document.getElementById('total-count-display').innerText = totalCycles;
+            updateUI();
+
+            document.getElementById('setup-screen').classList.add('hidden');
+            document.getElementById('timer-screen').classList.remove('hidden');
+
+            playBeep(440, 0.2); 
+
+            if (intervalId) clearInterval(intervalId);
+            intervalId = setInterval(tick, 1000);
+        }
+
+        function tick() {
+            if (isPaused) return;
+
+            secondsLeft--;
+            totalSecondsElapsed++;
+
+            if (secondsLeft <= 0) {
+                switchPhase();
+            }
+
+            updateUI();
+        }
+
+        function switchPhase() {
+            const runMin = parseFloat(document.getElementById('run-time').value);
+            const walkMin = parseFloat(document.getElementById('walk-time').value);
+            const totalCycles = parseInt(document.getElementById('total-cycles').value);
+
+            if (isRunningPhase) {
+                isRunningPhase = false;
+                secondsLeft = Math.round(walkMin * 60);
+                playBeep(660, 0.6); 
+            } else {
+                if (currentCycle >= totalCycles) {
+                    finishWorkout();
+                    return;
+                }
+                currentCycle++;
+                isRunningPhase = true;
+                secondsLeft = Math.round(runMin * 60);
+                playBeep(880, 0.8); 
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('time-left').innerText = formatTime(secondsLeft);
+            document.getElementById('cycle-count').innerText = currentCycle;
+            document.getElementById('total-elapsed').innerText = formatTime(totalSecondsElapsed);
+
+            const totalCycles = parseInt(document.getElementById('total-cycles').value) || 1;
+            const progress = ((currentCycle - 1 + (isRunningPhase ? 0 : 0.5)) / totalCycles) * 100;
+            document.getElementById('progress-bar').style.width = `${progress}%`;
+
+            const phaseTitle = document.getElementById('current-phase');
+            const phaseCard = document.getElementById('phase-card');
+
+            if (isRunningPhase) {
+                phaseTitle.innerText = "RUN";
+                phaseTitle.className = "text-4xl font-black uppercase tracking-widest text-emerald-600 mb-2";
+                phaseCard.style.borderColor = "#10b981";
+            } else {
+                phaseTitle.innerText = "WALK";
+                phaseTitle.className = "text-4xl font-black uppercase tracking-widest text-amber-500 mb-2";
+                phaseCard.style.borderColor = "#f59e0b";
+            }
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+            const btn = document.getElementById('pause-btn');
+            btn.innerText = isPaused ? "Resume" : "Pause";
+            btn.className = isPaused 
+                ? "flex-1 bg-indigo-600 text-white font-bold py-4 rounded-2xl transition-all"
+                : "flex-1 bg-slate-200 text-slate-800 font-bold py-4 rounded-2xl transition-all";
+        }
+
+        function stopWorkout() {
+            clearInterval(intervalId);
+            if (wakeLock) {
+                wakeLock.release().then(() => wakeLock = null);
+            }
+            isPaused = false;
+            document.getElementById('setup-screen').classList.remove('hidden');
+            document.getElementById('timer-screen').classList.add('hidden');
+        }
+
+        function finishWorkout() {
+            clearInterval(intervalId);
+            document.getElementById('progress-bar').style.width = `100%`;
+            playBeep(1100, 1.5);
+            
+            const finalTime = formatTime(totalSecondsElapsed);
+            
+            const message = document.createElement('div');
+            message.className = "fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50 animate-in fade-in duration-300";
+            message.innerHTML = `
+                <div class="bg-white p-8 rounded-3xl text-center shadow-2xl max-w-xs w-full">
+                    <div class="text-5xl mb-4">🏆</div>
+                    <h2 class="text-2xl font-bold mb-2">Goal Reached!</h2>
+                    <p class="text-slate-600 mb-6">Total Training Time:<br><span class="text-3xl font-black text-indigo-600">${finalTime}</span></p>
+                    <button id="close-msg" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-indigo-200">Close</button>
+                </div>
+            `;
+            document.body.appendChild(message);
+            document.getElementById('close-msg').onclick = () => {
+                document.body.removeChild(message);
+                stopWorkout();
+            };
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        // Register dummy service worker to satisfy PWA requirements
+        if ('serviceWorker' in navigator) {
+            const swCode = "self.addEventListener('fetch', function(event) {});";
+            const blob = new Blob([swCode], {type: 'text/javascript'});
+            const url = URL.createObjectURL(blob);
+            navigator.serviceWorker.register(url);
+        }
+    </script>
+</body>
+</html>
+
